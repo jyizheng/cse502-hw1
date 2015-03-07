@@ -158,13 +158,14 @@ void System::ramTick(int clk) {
         top->resp = tx_queue.begin()->first;
         top->resptag = tx_queue.begin()->second;
         cerr << "responding data " << top->resp << " on tag " << std::hex << top->resptag << endl;
-	return; 
+	return;
     } else {
         top->respcyc = 0;
         top->resp = 0xaaaaaaaaaaaaaaaaULL;
         top->resptag = 0xaaaa;
     }
 
+     cerr << "top->reqcyc" <<(int) top->reqcyc << endl;
     if (top->reqcyc) {
         cmd = (top->reqtag >> 8) & 0xf;
         
@@ -231,8 +232,8 @@ void System::dram_read_complete(unsigned id, uint64_t address, uint64_t clock_cy
     assert(tag != addr_to_tag.end());
     
     for(int i = 0; i < 64; i += 8) {
-        cerr << "fill data from " << std::hex << (address+(i&63)) <<  ": " << tx_queue.rbegin()->first << " on tag " << tag->second << endl;
         tx_queue.push_back(make_pair(cse502_be64toh(*((uint64_t*)(&ram[((address&(~63))+((address+i)&63))]))) + i ,tag->second));
+        cerr << "fill data from " << std::hex << (address+(i&63)) << ": " << tx_queue.rbegin()->first << " on tag " << tag->second << endl;
     }
     addr_to_tag.erase(tag);
 }

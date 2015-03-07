@@ -145,7 +145,6 @@ module DirectMap(
 	    cstate <= idle;
 	    ack <= 1'b1;
 
-
 	end else if (cstate == cmp_tag) begin
 
 	    if (hit) begin 	
@@ -174,15 +173,13 @@ module DirectMap(
 		cstate <= wait_wr_line;
         	$display("data_wr is %x", data_wr);
 		data_en <= 1'b1;
-
 	    end else if (read_one_word) begin
+		bus.reqcyc <= 1'b0;
 		counter <= counter + 1;
         	$display("data_wr is %x", data_wr);
 	    end
 	end else if (cstate == wait_wr_line) begin
 		cstate <= cmp_tag;
-		/* Stop memory request */
-	    	bus.reqcyc <= 1'b0;
         end else
         	$display("Nothing to do");
    end
