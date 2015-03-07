@@ -1,0 +1,341 @@
+/**
+ * A write-allocate, write-back direct-mapped cache
+ */
+module DirectMap(
+    CacheInterface.Bottom cif,
+    SysBus.Top bus
+);
+
+    // bytes per word
+    parameter WORD_SIZE = 4;
+    // words per line
+    parameter LOG_WORDS_PER_LINE = 4;
+    // input address width, does not include block-offset bits
+    parameter ADDR_WIDTH = 64-6;
+    // log2 of # of sets in the cache (= # index bits)
+    parameter LOG_NUM_SETS = 10;
+ 
+    localparam WORDS_PER_LINE = 2**LOG_WORDS_PER_LINE;
+    localparam WORD_SIZE_BITS = WORD_SIZE * 8;
+    localparam NUM_SETS = 2**LOG_NUM_SETS;
+    localparam LINE_SIZE = WORD_SIZE * WORDS_PER_LINE;
+    localparam LINE_SIZE_BITS = LINE_SIZE * 8;
+
+    localparam MAX_INDEX_BIT = LOG_NUM_SETS - 1;
+    localparam MAX_LINE_BIT = LINE_SIZE_BITS - 1;
+    localparam MAX_TAG_BIT = ADDR_WIDTH - LOG_NUM_SETS - 1;
+
+
+    /* This is index to the sram */	
+    logic[MAX_INDEX_BIT:0] index;
+
+    /* data is 512 bit one row */
+    logic data_en;
+    logic data_rst;
+    logic[MAX_LINE_BIT:0] data_wr;
+    logic[MAX_LINE_BIT:0] data_rd;
+
+    /* 2 bits state */
+    logic state_en;
+    logic state_rst;
+    logic[1:0] state_rd;
+    logic[1:0] state_wr;
+
+    /* 48 bits tag */
+    logic tag_en;
+    logic tag_rst;
+    logic[MAX_TAG_BIT:0] tag_rd;
+    logic[MAX_TAG_BIT:0] tag_wr;
+
+    /* output of cache  module */	
+    logic[WORD_SIZE_BITS-1:0] data_out;
+    logic ack;
+
+    /* Bypass a bug */
+    logic clk;
+    assign index = cif.line_addr[MAX_INDEX_BIT:0];
+    assign clk = bus.clk;
+
+    assign state_rst=bus.reset; 	
+    assign tag_rst=bus.reset; 	
+    assign data_rst=bus.reset;
+
+    // instantiate separate SRAMs for state, tag and data
+    SRAM # (2, LOG_NUM_SETS, 2) state(.clk(clk), .reset(data_rst),
+				      .readAddr(index), .readData(state_rd),
+				      .writeAddr(index),
+				      .writeData(state_wr),
+                                      .writeEnable(state_en));
+
+    SRAM # (MAX_TAG_BIT+1, LOG_NUM_SETS, MAX_TAG_BIT+1) tag(.clk(clk), .reset(tag_rst),
+				      .readAddr(index), .readData(tag_rd),
+                                      .writeAddr(index),
+				      .writeData(tag_wr),
+                                      .writeEnable(tag_en));
+
+    SRAM # (MAX_LINE_BIT+1, LOG_NUM_SETS, MAX_LINE_BIT+1) data(.clk(clk), .reset(data_rst),
+					 .readAddr(index), .readData(data_rd),
+                                         .writeAddr(index),
+                                         .writeData(data_wr),
+                                         .writeEnable(data_en));
+
+    typedef enum { init, cmp_tag, alloc0, alloc1, ack0,
+		   alloc2, alloc3, alloc4, 
+		   alloc5, alloc6, alloc7,
+		   write_back, write_data
+		 } cache_state_t;
+    cache_state_t  state1, state2;
+
+    assign data_out = cif.data_out;
+    assign ack = cif.ack;
+
+    always_comb begin
+        state1 = state2;
+        data_out = '0;
+        ack = '0;
+
+	state_wr = 2'b00;
+	tag_wr = '0;
+	
+	/* Read tag and state */
+        tag_en = '0;
+        state_en = '0;
+        data_en = '0;
+
+	/* Only change the target word */
+        data_wr = data_rd; 
+
+	case(cif.word_select)
+	4'b0000: data_wr[31:0]=data_out;
+	4'b0001: data_wr[63:32]=data_out;
+	4'b0010: data_wr[95:94]=data_out;
+	4'b0011: data_wr[127:96]=data_out;
+	4'b0100: data_wr[159:128]=data_out;
+	4'b0101: data_wr[191:160]=data_out;
+	4'b0110: data_wr[223:192]=data_out;
+	4'b0111: data_wr[255:224]=data_out;
+	4'b1000: data_wr[287:256]=data_out;
+	4'b1001: data_wr[319:288]=data_out;
+	4'b1010: data_wr[351:320]=data_out;
+	4'b1011: data_wr[383:352]=data_out;
+	4'b1100: data_wr[415:384]=data_out;
+	4'b1101: data_wr[447:416]=data_out;
+	4'b1110: data_wr[479:448]=data_out;
+	4'b1111: data_wr[511:480]=data_out;
+	endcase
+
+
+	case(cif.word_select)
+	4'b0000: data_out=data_rd[31:0];
+	4'b0001: data_out=data_rd[63:32];
+	4'b0010: data_out=data_rd[95:94];
+	4'b0011: data_out=data_rd[127:96];
+	4'b0100: data_out=data_rd[159:128];
+	4'b0101: data_out=data_rd[191:160];
+	4'b0110: data_out=data_rd[223:192];
+	4'b0111: data_out=data_rd[255:224];
+	4'b1000: data_out=data_rd[287:256];
+	4'b1001: data_out=data_rd[319:288];
+	4'b1010: data_out=data_rd[351:320];
+	4'b1011: data_out=data_rd[383:352];
+	4'b1100: data_out=data_rd[415:384];
+	4'b1101: data_out=data_rd[447:416];
+	4'b1110: data_out=data_rd[479:448];
+	4'b1111: data_out=data_rd[511:480];
+	endcase
+
+	//bus.req = {58'hf, 6'b0};
+	bus.reqtag = 13'h1100;
+
+	case(state2)
+	init: 	begin
+		if (cif.req)
+			state1=cmp_tag;
+		end
+	cmp_tag: begin
+        	$display("tag_rd:%b", tag_rd);
+        	$display("cif.line_addr:%b", cif.line_addr[ADDR_WIDTH-1:LOG_NUM_SETS]);
+        	$display("state_rd:%b", state_rd);
+
+		/* state_rd: bit 1 valid, 0 dirty */
+		if (tag_rd == cif.line_addr[ADDR_WIDTH-1:LOG_NUM_SETS] && state_rd[1]) begin
+        		$display("This is a cache hit");
+			cif.ack = 1'b1;
+			/* For write hit */
+			if (!cif.read_write_n) begin
+				tag_en = 1'b1;
+				state_en = 1'b1;
+				data_en = 1'b1;
+				/* Keep the current tag */
+				tag_wr = tag_rd;
+				state_wr =2'b11;
+			end
+			else begin
+				/* For read hit do nothing
+			   	and end the transaction */
+			case(cif.word_select)
+			4'b0000: cif.data_out=data_rd[31:0];
+			4'b0001: cif.data_out=data_rd[63:32];
+			4'b0010: cif.data_out=data_rd[95:94];
+			4'b0011: cif.data_out=data_rd[127:96];
+			4'b0100: cif.data_out=data_rd[159:128];
+			4'b0101: cif.data_out=data_rd[191:160];
+			4'b0110: cif.data_out=data_rd[223:192];
+			4'b0111: cif.data_out=data_rd[255:224];
+			4'b1000: cif.data_out=data_rd[287:256];
+			4'b1001: cif.data_out=data_rd[319:288];
+			4'b1010: cif.data_out=data_rd[351:320];
+			4'b1011: cif.data_out=data_rd[383:352];
+			4'b1100: cif.data_out=data_rd[415:384];
+			4'b1101: cif.data_out=data_rd[447:416];
+			4'b1110: cif.data_out=data_rd[479:448];
+			4'b1111: cif.data_out=data_rd[511:480];
+			endcase
+			end
+
+			state1 = init;
+		end
+		/* For cache miss */
+		else begin
+			tag_en = 1'b1;
+			state_en = 1'b1;
+			state_wr[1]=1'b1;
+
+			/* If read, it is clean; write dirty */
+			state_wr[0]= ~cif.read_write_n;
+			tag_wr = cif.line_addr[ADDR_WIDTH-1:LOG_NUM_SETS];
+
+			/* Issue new memory request */
+			bus.reqcyc = 1'b1;
+		
+			/* data in the cache is useless */
+			if (state_rd[0] == 1'b0 || state_rd[1] == 1'b0) begin
+				state1 = alloc0;
+				/* Bus memory address is 64 bits */
+				bus.req = {6'b0, cif.line_addr};
+        			$display("Try to read from memory");
+			end
+			else begin
+				/* write back the current line */
+				bus.req = {tag_rd, index, 6'b000000};
+				/* write request */
+				bus.reqtag = 13'h0000;
+				state1 = write_data;
+			end
+		end
+		end
+	alloc0: begin
+		bus.reqcyc = 1'b0;
+		if (bus.respcyc) begin
+			state1 = alloc1;
+			data_wr[63:0]=bus.resp;
+        		$display("bus.resp0 is %x", bus.resp);
+		end
+		end
+	alloc1: begin
+		bus.respack = 1'b1;
+		if (bus.respcyc) begin
+			state1 = alloc2;
+			data_wr[127:64]=bus.resp;
+        		$display("bus.resp1 is %x", bus.resp);
+		end
+		end
+	alloc2: begin
+		if (bus.respcyc) begin
+			state1 = alloc3;
+			data_wr[191:128]=bus.resp;
+        		$display("bus.resp2 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+	alloc3: begin
+		if (bus.respcyc) begin
+			state1 = alloc4;
+			data_wr[255:192]=bus.resp;
+        		$display("bus.resp3 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+	alloc4: begin
+		if (bus.respcyc) begin
+			state1 = alloc5;
+			data_wr[319:256]=bus.resp;
+        		$display("bus.resp4 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+	alloc5: begin
+		if (bus.respcyc) begin
+			state1 = alloc6;
+			data_wr[383:320]=bus.resp;
+        		$display("bus.resp5 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+	alloc6: begin
+		if (bus.respcyc) begin
+			state1 = alloc7;
+			data_wr[447:384]=bus.resp;
+        		$display("bus.resp6 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+	alloc7: begin
+		if (bus.respcyc) begin
+			state1 = cmp_tag;
+			data_wr[511:448]=bus.resp;
+			data_en = 1'b1;
+			tag_en = 1'b1;
+			state_en = 1'b1;
+        		$display("bus.resp7 is %x", bus.resp);
+		end
+		//bus.respack = 1'b1;
+		end
+
+	write_data: begin
+		if (bus.reqack) begin
+			case(cif.word_select[3:1])
+			3'b001: bus.req=data_rd[127:64];
+			3'b010: bus.req=data_rd[191:128];
+			3'b011: bus.req=data_rd[255:192];
+			3'b100: bus.req=data_rd[319:256];
+			3'b101: bus.req=data_rd[383:320];
+			3'b110: bus.req=data_rd[447:384];
+			3'b111: bus.req=data_rd[511:448];
+			endcase
+			state1 = write_back;
+		end
+		end
+	write_back: begin
+		if (bus.reqack) begin
+			bus.reqcyc = 1'b1;
+			bus.reqtag = 13'b1000;
+			state1 = alloc0;
+		end
+		end		
+	endcase
+    end
+
+    // implement the cache logic
+    always_ff @(posedge bus.clk) begin
+        if (bus.reset) begin
+            // reset logic: what happens on a reset
+	    state2    <= init;	
+        end
+        else begin
+            // - to handle write-backs properly
+	    state2 <= state1;
+            $display("This is state: %d", state2);
+        end
+    end
+
+/*
+    assign bus.respack = 0;
+    assign cif.ack = 0;
+    assign cif.data_out = 0;
+    assign bus.req = 0;
+    assign bus.reqtag = 0;
+    assign bus.reqcyc = 0;
+    */	
+endmodule    
+    

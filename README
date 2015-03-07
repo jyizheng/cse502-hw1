@@ -1,0 +1,87 @@
+1. Set the environment variables
+
+   Following tools have been prepared for you:
+     - verilator (in ~vagrawal/cse502-tools/bin)
+     - gtkwave   (in ~vagrawal/cse502-tools/bin)
+     - sparc cross-compiler (in ~nhonarmand/cse502/sparc-toolset/bin)
+
+   To use these tools, you need to set the environment variables
+   LD_LIBRARY_PATH and PATH.  The easiest way to do this is to source
+   one of the following shell scripts:
+     - for bash: ~nhonarmand/cse502/cse502-bashrc
+     - for csh:  ~nhonarmand/cse502/cse502-cshrc
+
+
+2. Building/Running your simulator code
+
+   Following are the commands to build and run the code:
+
+   > make       // build code
+   > make run   // run code
+
+   The result of running the code will be a 'trace.vcd' waveform
+   file. You can view it using 'gtkwave' (see instructions below).
+
+
+3. Viewing the trace.vcd waveform
+
+   If you have logged in to the server using the -Y or -X option, you
+   can view waveforms using the following command:
+
+   > gtkwave trace.vcd
+
+
+4. Submitting your code
+   
+   Type the following command in your project directory. It will sign
+   and submit your code to us:
+
+  > make submit
+
+
+5. What to implement?
+
+   1) You should implement a direct-mapped cache in SystemVerilog.
+   Your cache, on the one hand, interfaces with the processor and, on
+   the other hand, with the main memory.
+
+   We have provided the skeleton code for your cache including
+   cache-to-processor and cache-to-memory interfaces, an SRAM module
+   that you should instantiate in your cache to implement the data,
+   tag and state arrays, and C++ code for emulating the main memory.
+   Read the code in 'system.cpp' to understand how your cache should
+   interact with the main memory.  In particular, make sure you
+   understand the format of 'reqtag' and the timing of a bus
+   transaction.
+
+   2) The code in 'system.cpp' also contains a partial testbench for
+   your cache.  It emulates a processor making cache requests. The
+   testbench is inomplete.  To test the cache properly, the testbench
+   should check the data returned by the cache on a read operation to
+   make sure it is consistent with the last write to the same memory
+   address.  You should add the code to perform this check to
+   'system.cpp'.
+
+
+6. How to go about the implementation?
+
+   1) Start by reading the SRAM code. Make sure you understand how it
+   works.  Then try to figure out how to instantiate state, tag and
+   data arrays of your cache as separate SRAM instances.  Note that
+   you will need to set the SRAM parameters differently for each of
+   these three instantiations.
+
+   2) Write the code to handle a cache hit. This should be
+   straightforward.
+
+   3) Write the code to handle a cache miss.  Note that, to handle a
+   cache miss, you typically need to kick-out an existing cache block
+   to make room for the new one.  If the block-to-be-booted is dirty,
+   it needs to be written back to the memory before you can replace
+   it.  If the block is clean, however, you can just discard it.
+   Then, you can read the new block from the memory, put it in the
+   cache, and perform the requested operation.  This whole process of
+   miss-handling will inevitably be a multi-cycle process.
+
+   4) Complete the testbench code to make sure your cache works
+   properly.
