@@ -66,7 +66,6 @@ void System::procTick(int clk) {
 		return;
 	}
 	
-
         //cerr << "req:" << std::hex << (int)top->c_req<< endl;
         //cerr << "arc:" << std::hex << (int)top->c_ack<< endl;
 
@@ -92,46 +91,48 @@ void System::procTick(int clk) {
 			//       add code elsewhere too.
 			//		
 			// @YOUR CODE HERE ...
-
-                	cerr << "Data:" << std::hex << top->c_data_out << endl;
+                	cerr << "[proc]: data_out " << std::hex << top->c_data_out << endl;
 			return;
 		}
 
    	 	struct timeval tv;
     		struct timezone tz;
     		gettimeofday (&tv, &tz);
-
-		//randomly wait before issuing the next request
 		srand(time(NULL));
+
 		if ((tv.tv_sec + tv.tv_usec + rand()) % 5 == 0) {
-                	cerr << "Wait:" << std::hex << (int)top->c_req << endl;
 			return;
 		}
 
 		// issue a new request
-		top->c_req = 1;
-		top->c_read_write_n = 0; //rand() % 2;
-
+        	cerr << "[proc]: ======= start a new request =====" << endl;
+    		gettimeofday (&tv, &tz);
 		srand(time(NULL));
-		if ((tv.tv_sec + tv.tv_usec + rand()) % 2) {
-
+		top->c_req = 1;
+		top->c_read_write_n = (tv.tv_sec + tv.tv_usec + rand()) % 2;
+    		
+		gettimeofday (&tv, &tz);
+		srand(time(NULL));
+		if ((tv.tv_sec + tv.tv_usec + rand()) % 3) {
+			cerr << "[proc]: fix address" << endl;
+			unsigned int addr = (0xbeadbeef)% ramsize;
+			top->c_line_addr = addr >> 6;
+		} else {
+    			gettimeofday (&tv, &tz);
 			srand(time(NULL));
 			unsigned int addr = (tv.tv_sec + tv.tv_usec + rand())% ramsize;
-			//top->c_line_addr = addr & ~0x3FU;
 			top->c_line_addr = addr >> 6;
-			srand(2);
-			top->c_word_select = rand() % 16;
-
-		} else {
-			cerr << "fix address"  << endl;
-			//top->c_line_addr = 0x1eeef & ~0x3FU;
-			top->c_line_addr = 0x1eeef >> 6;
-			top->c_word_select = (tv.tv_sec + tv.tv_usec + rand()) % 16;
 		}
 
-                cerr << "Address:" << std::hex << top->c_line_addr << endl;
-                cerr << "Select:"  << std::hex << (int)top->c_word_select << endl;
-		
+    		gettimeofday (&tv, &tz);
+		srand(time(NULL));
+		top->c_word_select = (tv.tv_sec + tv.tv_usec + rand()) % 16;
+ 	
+		cerr <<  endl;
+                cerr << "[proc]: address:" << std::hex << top->c_line_addr << endl;
+                cerr << "[proc]: select:" << std::hex << (int)top->c_word_select << endl;
+                cerr << "[proc]: read_write:" << std::hex << (int)top->c_read_write_n << endl;
+	
 		if (! top->c_read_write_n) {
 			// write operation
 			srand(time(NULL));
@@ -143,7 +144,7 @@ void System::procTick(int clk) {
 void System::ramTick(int clk) {
     
     if (top->reset && top->reqcyc) {
-        cerr << "Sending a request on RESET. Ignoring..." << endl;
+        cerr << "[mem]: sending a request on RESET. Ignoring..." << endl;
         return;
     }
     
@@ -160,15 +161,14 @@ void System::ramTick(int clk) {
     dramsim->update();
     if (!tx_queue.empty() && top->respack) { 
 	tx_queue.pop_front();
-	cerr << "Delete an element" << endl; 
-	cerr << "tx_queue size:" << tx_queue.size() << endl;
+	cerr << "[mem]: tx_queue size is " << tx_queue.size() << endl;
     }
 
     if (!tx_queue.empty()) {
         top->respcyc = 1;
         top->resp = tx_queue.begin()->first;
         top->resptag = tx_queue.begin()->second;
-        cerr << "responding data " << top->resp << " on tag " << std::hex << top->resptag << endl;
+        cerr << "[mem]: responding data " << top->resp << " on tag " << std::hex << top->resptag << endl;
 	return;
     } else {
         top->respcyc = 0;
@@ -186,7 +186,7 @@ void System::ramTick(int clk) {
             case MEMORY:
 		// critical word first
                 *((uint64_t*)(&ram[((xfer_addr&(~63))+((xfer_addr + ((8-rx_count)*8))&63))])) = cse502_be64toh(top->req);
-                cerr << "Data written: " << std::hex << cse502_be64toh(top->req) << endl;
+                cerr << "[mem]: data written is " << std::hex << cse502_be64toh(top->req) << endl;
                 break;
             default:
 		assert(false);
@@ -214,11 +214,11 @@ void System::ramTick(int clk) {
                 assert(
                     dramsim->addTransaction(isWrite, xfer_addr)
                 );
-                cerr << "add transaction " << std::hex << xfer_addr << " on tag " << top->reqtag << endl;
+                cerr << "[mem]: add transaction " << std::hex << xfer_addr << " on tag " << top->reqtag << endl;
                 if (!isWrite) addr_to_tag[xfer_addr] = top->reqtag;
 
     		if (!tx_queue.empty()) {
-			cerr << "tx_queue size:" << tx_queue.size() << endl;
+			cerr << "[mem]: tx_queue size is " << tx_queue.size() << endl;
 		}
 
             }
@@ -243,15 +243,15 @@ void System::dram_read_complete(unsigned id, uint64_t address, uint64_t clock_cy
     
     map<uint64_t, int>::iterator tag = addr_to_tag.find(address);
     assert(tag != addr_to_tag.end());
+
     
     for(int i = 0; i < 64; i += 8) {
-        tx_queue.push_back(make_pair(cse502_be64toh(*((uint64_t*)(&ram[((address&(~63))+((address+i)&63))]))) + i ,tag->second));
-        cerr << "fill data from " << std::hex << (address+(i&63)) << ": " << tx_queue.rbegin()->first << " on tag " << tag->second << endl;
+    	uint64_t tmp = 0xabcd000000000000;  
+        tx_queue.push_back(make_pair(cse502_be64toh(*((uint64_t*)(&ram[((address&(~63))+((address+i)&63))]))) + i + tmp ,tag->second));
+        cerr << "[mem]: fill data from " << std::hex << (address+(i&63)) << ": " << tx_queue.rbegin()->first << " on tag " << tag->second << endl;
     }
     addr_to_tag.erase(tag);
 }
 
 void System::dram_write_complete(unsigned id, uint64_t address, uint64_t clock_cycle) {
-
-    cerr << "I am write"  << endl;
 }
