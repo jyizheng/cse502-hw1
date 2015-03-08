@@ -100,8 +100,8 @@ void System::procTick(int clk) {
    	 	struct timeval tv;
     		struct timezone tz;
     		gettimeofday (&tv, &tz);
-		
-		// randomly wait before issuing the next request
+
+		//randomly wait before issuing the next request
 		srand(time(NULL));
 		if ((tv.tv_sec + tv.tv_usec + rand()) % 5 == 0) {
                 	cerr << "Wait:" << std::hex << (int)top->c_req << endl;
@@ -110,13 +110,24 @@ void System::procTick(int clk) {
 
 		// issue a new request
 		top->c_req = 1;
-		top->c_read_write_n = 1; //rand() % 2;
+		top->c_read_write_n = 0; //rand() % 2;
 
 		srand(time(NULL));
-		unsigned int addr = (tv.tv_sec + tv.tv_usec + rand())% ramsize;
-		top->c_line_addr = addr & ~0x3FU;
-		srand(2);
-		top->c_word_select = rand() % 16;
+		if ((tv.tv_sec + tv.tv_usec + rand()) % 2) {
+
+			srand(time(NULL));
+			unsigned int addr = (tv.tv_sec + tv.tv_usec + rand())% ramsize;
+			//top->c_line_addr = addr & ~0x3FU;
+			top->c_line_addr = addr >> 6;
+			srand(2);
+			top->c_word_select = rand() % 16;
+
+		} else {
+			cerr << "fix address"  << endl;
+			//top->c_line_addr = 0x1eeef & ~0x3FU;
+			top->c_line_addr = 0x1eeef >> 6;
+			top->c_word_select = (tv.tv_sec + tv.tv_usec + rand()) % 16;
+		}
 
                 cerr << "Address:" << std::hex << top->c_line_addr << endl;
                 cerr << "Select:"  << std::hex << (int)top->c_word_select << endl;
@@ -124,7 +135,7 @@ void System::procTick(int clk) {
 		if (! top->c_read_write_n) {
 			// write operation
 			srand(time(NULL));
-			top->c_data_in = rand();
+			top->c_data_in = 0xdeadbeef;
 		}
 	}
 }
@@ -165,7 +176,7 @@ void System::ramTick(int clk) {
         top->resptag = 0xaaaa;
     }
 
-     cerr << "top->reqcyc" <<(int) top->reqcyc << endl;
+    // cerr << "top->reqcyc" <<(int) top->reqcyc << endl;
     if (top->reqcyc) {
         cmd = (top->reqtag >> 8) & 0xf;
         
@@ -173,10 +184,12 @@ void System::ramTick(int clk) {
 			
             switch(cmd) {
             case MEMORY:
-                *((uint64_t*)(&ram[((xfer_addr&(~63))+((xfer_addr + ((8-rx_count)*8))&63))])) = cse502_be64toh(top->req);    // critical word first
+		// critical word first
+                *((uint64_t*)(&ram[((xfer_addr&(~63))+((xfer_addr + ((8-rx_count)*8))&63))])) = cse502_be64toh(top->req);
+                cerr << "Data written: " << std::hex << cse502_be64toh(top->req) << endl;
                 break;
             default:
-			assert(false);
+		assert(false);
             }
             
             --rx_count;
@@ -196,7 +209,7 @@ void System::ramTick(int clk) {
             xfer_addr = top->req;
             assert(!(xfer_addr & 7));
             if (addr_to_tag.find(xfer_addr)!=addr_to_tag.end()) {
-                cerr << "Access for " << std::hex << xfer_addr << " already outstanding. Ignoring..." << endl;
+                //cerr << "Access for " << std::hex << xfer_addr << " already outstanding. Ignoring..." << endl;
             } else {
                 assert(
                     dramsim->addTransaction(isWrite, xfer_addr)
@@ -239,4 +252,6 @@ void System::dram_read_complete(unsigned id, uint64_t address, uint64_t clock_cy
 }
 
 void System::dram_write_complete(unsigned id, uint64_t address, uint64_t clock_cycle) {
+
+    cerr << "I am write"  << endl;
 }
