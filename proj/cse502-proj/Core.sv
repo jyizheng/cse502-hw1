@@ -1,3 +1,7 @@
+`include "global.svh"
+`include "gpr.svh"
+`include "inst.svh"
+
 module Core (
 	input[63:0] entry
 ,	/* verilator lint_off UNDRIVEN */ /* verilator lint_off UNUSED */ Sysbus bus /* verilator lint_on UNUSED */ /* verilator lint_on UNDRIVEN */
@@ -5,105 +9,272 @@ module Core (
 	import "DPI-C" function int
 	syscall_cse502(input int g1, input int o0, input int o1, input int o2, input int o3, input int o4, input int o5);
 
-	enum { fetch_idle, fetch_waiting, fetch_active } fetch_state;
-	logic [63:0] fetch_rip;
-	logic [5:0] fetch_skip;
-	logic [6:0] fetch_offset, decode_offset;
-	logic [0:2*64*8-1] decode_buffer; // NOTE: buffer bits are left-to-right in increasing order
+	logic clk;
+	assign clk = bus.clk;
 
-	logic send_fetch_req;
+
+	logic[31:0] reg_occupies;
+	logic[31:0] rflags;
+	logic[31:0] regs[`GLB_REG_NUM-1:0];
+	
+
+	/* Data initialization */
+	always_ff @ (posedge bus.clk) begin
+		if (bus.reset) begin
+			for (int i = 0; i < `GLB_REG_NUM; i += 1)
+				regs[i] <= 0;
+
+			reg_occupies <= 0;
+			regs[`GPR_RSP] <= 32'h0;
+		end
+	end
+
+	/* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+	/* Memory arbiter and cache */
+	logic irequest;
+	logic ireqack;
+	logic[63:0] iaddr;
+	logic[64*8-1:0] idata;
+	logic idone;
+	logic drequest;
+	logic dreqack;
+	logic dclflush;
+	logic dwrenable;
+	logic[63:0] daddr;
+	logic[64*8-1:0] drdata;
+	logic[64*8-1:0] dwdata;
+	logic ddone;
+
+	Arbiter arbiter(bus,
+		irequest, ireqack, iaddr, idata, idone,
+		drequest, dreqack, dwrenable, daddr, drdata, dwdata, ddone);
+
+	logic icache_enable;
+	logic[63:0] icache_addr;
+	logic[511:0] icache_rdata;
+	logic icache_done;
+	ICache icache(clk, icache_enable, icache_addr, icache_rdata, icache_done,
+		irequest, ireqack, iaddr, idata, idone);
+
+	logic dcache_enable;
+	logic dcache_wenable;
+	logic[63:0] dcache_addr;
+
+	/* verilator lint_off UNDRIVEN */ /* verilator lint_off UNUSED */ 
+	logic dcache_done;
+	logic[63:0] dcache_rdata;
+	logic[63:0] dcache_wdata;
+  	/* verilator lint_on UNUSED */ /* verilator lint_on UNDRIVEN */
+
+	assign dcache_enable = 0;
+	assign dcache_wenable = 0;
+	assign dcache_addr = 0;
+	assign dcache_wdata = 0;
+	assign dclflush = 0;
+
+	DCache dcache(clk,
+		dcache_enable, dcache_wenable, dclflush, dcache_addr, dcache_rdata, dcache_wdata, dcache_done,
+		drequest, dreqack, dwrenable, daddr, drdata, dwdata, ddone);
+
+	/* --------------------------------------------------------- */
+	/* Instruction-Fetch stage */
+	/* verilator lint_off UNDRIVEN */ /* verilator lint_off UNUSED */ 
+	logic if_dc;
+	//logic dc_if;
+	logic[0:15*8-1] decode_bytes;
+	logic[63:0] decode_rip;
+	/* verilator lint_off UNDRIVEN */ /* verilator lint_off UNUSED */ 
+
+	logic[7:0] bytes_decoded;
+	logic if_set_rip;
+	logic[63:0] if_new_rip;
+
+	Ifetch inf(clk, if_set_rip, if_new_rip, icache_enable, icache_addr, icache_rdata, icache_done,
+		decode_bytes, decode_rip, bytes_decoded, if_dc);
+
+	/* --------------------------------------------------------- */
+	/* Decode stage */
+	logic dc_taken = 0;
+	logic dc_df = 0;
+	logic dc_resume = 0;
+	micro_op_t dc_uop;
+	Decoder decoder(clk, if_dc, dc_resume, decode_rip, decode_bytes, dc_taken,
+		bytes_decoded, dc_uop, dc_df);
+
 	always_comb begin
-		if (fetch_state != fetch_idle) begin
-			send_fetch_req = 0; // hack: in theory, we could try to send another request at this point
-		end else if (bus.reqack) begin
-			send_fetch_req = 0; // hack: still idle, but already got ack (in theory, we could try to send another request as early as this)
+		if (bus.reset) begin
+			if_set_rip = 1;
+			if_new_rip = entry;
 		end else begin
-			send_fetch_req = (fetch_offset - decode_offset < 7'd32);
+			if_set_rip = 0;
+			if_new_rip = 0;
 		end
 	end
 
-	assign bus.respack = bus.respcyc; // always able to accept response
 
-	// logic to read responses from bus
-	// and put them in the decode buffer
-	always @(posedge bus.clk) begin
-	
-		// bus.reset?
-		if (bus.reset) begin
-			fetch_state <= fetch_idle;
-			fetch_rip  <= entry & ~63;
-			fetch_skip <= entry[5:0];
-			fetch_offset <= 0;			
-		end
-		
-		// !bus.reset
-		else begin
-		
-			bus.reqcyc <= send_fetch_req;
-			bus.req <= fetch_rip & ~63;
-			bus.reqtag <= { bus.READ, bus.MEMORY, 8'b0 };
-
-			// response ready?
-			if (bus.respcyc) begin
-				assert(!send_fetch_req) else $fatal;
-				
-				fetch_state <= fetch_active;
-				fetch_rip <= fetch_rip + 8;
-				if (fetch_skip > 0) begin
-					fetch_skip <= fetch_skip - 8;
-				end
-				else begin
-					decode_buffer[fetch_offset*8 +: 64] <= bus.resp;
-					//$display("fill at %d: %x [%x]", fetch_offset, bus.resp, decode_buffer);
-					fetch_offset <= fetch_offset + 8;
-				end				
-			end
-			else begin
-				if (fetch_state == fetch_active) begin
-					fetch_state <= fetch_idle;
-				end
-				else if (bus.reqack) begin
-					assert(fetch_state == fetch_idle) else $fatal;
-					fetch_state <= fetch_waiting;
-				end
-			end
-		end
+	always_ff @ (posedge bus.clk) begin
+		/*
+		if (wb_branch) begin
+			dc_resume <= 1;
+		end else if (exe_branch) begin
+			dc_resume <= 1;
+		end else 
+		*/
+			dc_resume <= 0;
 	end
-	
-	// NOTE: buffer bits are left-to-right in increasing order
-	wire [0:(128+15)*8-1] decode_bytes_repeated = { decode_buffer, decode_buffer[0:15*8-1] }; 
-	wire [0:15*8-1] decode_bytes = decode_bytes_repeated[decode_offset*8 +: 15*8];
-	
-	// can decode if there is an instruction (4-bytes) in the decode buffer
-	wire can_decode = (fetch_offset - decode_offset >= 7'd4);
 
-	logic[3:0] bytes_decoded_this_cycle;
+	/* --------------------------------------------------------- */
+	/* Data Fetch & Schedule stage */
+	logic df_taken;
+	assign dc_taken = df_taken;
+	micro_op_t df_uop;
+	micro_op_t df_uop_tmp;
+	logic df_exe;
+	logic mem_blocked;
+
+	/* check register conflict */
+	function logic df_reg_conflict(/* verilator lint_off UNUSED */ micro_op_t uop /* verilator lint_off UNUSED */);
+		if (uop.oprd1.t == `OPRD_T_RD || uop.oprd1.t == `OPRD_T_RS)
+			if (reg_occupies[uop.oprd1.r] != 0)
+				return 1;
+
+		if (uop.oprd2.t == `OPRD_T_RD || uop.oprd2.t == `OPRD_T_RS)
+			if (reg_occupies[uop.oprd2.r] != 0)
+				return 1;
+
+		if (uop.oprd3.t == `OPRD_T_RD || uop.oprd3.t == `OPRD_T_RS)
+			if (reg_occupies[uop.oprd3.r] != 0)
+				return 1;
+		return 0;
+	endfunction
+
+	/* This can only be called from alwasy_ff */
+	function logic df_set_reg_conflict(oprd_t oprd);
+		/* FIXME: here we assume oprd1 is the target, need to handle multi-target condition */
+		if (oprd.t == `OPRD_T_RD || oprd.t == `OPRD_T_RS) begin
+			reg_occupies[oprd.r] <= 1;
+		end
+
+		return 0;
+	endfunction
+
 	always_comb begin
-		if (can_decode) begin : decode_block
-			// cse502 : Decoder here
-			// remove the following line. It is only here to allow successful compilation in the absence of your code.
-			if (decode_bytes == 0) ;
+		df_taken = 0;
+		if (dc_df == 1 && !df_reg_conflict(dc_uop) && !mem_blocked) begin
+			df_taken = 1;
+			df_uop_tmp = dc_uop;
 
-			// cse502 : following is an example of how to finish the simulation
-			if (decode_bytes == 0 && fetch_state == fetch_idle) $finish;
-		end
-		else begin
-			bytes_decoded_this_cycle = 0;
+			/* Retrieve register values
+			* TODO: might need special treatment for special registers */
+			if (df_uop_tmp.oprd1.t == `OPRD_T_RD) begin
+				df_uop_tmp.oprd1.value = regs[df_uop_tmp.oprd1.r];
+			end
+
+			if (df_uop_tmp.oprd2.t == `OPRD_T_RS) begin
+				df_uop_tmp.oprd1.value = regs[df_uop_tmp.oprd2.r];
+			end
+
+			if (df_uop_tmp.oprd2.t == `OPRD_T_RS) begin
+				df_uop_tmp.oprd1.value = regs[df_uop_tmp.oprd3.r];
+			end
 		end
 	end
 
-	always @(posedge bus.clk) begin
-		if (bus.reset) begin
-			decode_offset <= 0;
-			decode_buffer <= 0;
-		end
-		else begin
-			decode_offset <= decode_offset + {3'b0, bytes_decoded_this_cycle };
+	always_ff @ (posedge bus.clk) begin
+		if (dc_df == 1 && df_taken == 1 && !mem_blocked) begin
+			/* we need to set occupation table in always_ff */
+			df_set_reg_conflict(df_uop_tmp.oprd1);
+
+			df_uop <= df_uop_tmp;
+			df_exe <= 1;
+		end else if (mem_blocked) begin
+			/* Keep the previous value */
+		end else begin
+			df_uop <= 0;
+			df_exe <= 0;
 		end
 	end
-	
+
+
+	/* --------------------------------------------------------- */
+	/* EXE stage */
+	logic exe_mem;
+	logic[63:0] exe_result;
+	logic[31:0] exe_rflags;
+	micro_op_t exe_uop;
+
+	logic exe_branch;
+	logic[63:0] exe_rip;
+
+	ALU alu(clk, df_exe,
+		df_uop.op, df_uop.op2, df_uop.op3, df_uop.oprd1.value, df_uop.oprd2.value, df_uop.oprd3.value, 
+		df_uop.next_rip, exe_result, exe_rflags, exe_mem, mem_blocked, exe_branch, exe_rip);
+
+	always_ff @ (posedge bus.clk) begin
+		if (df_exe && !mem_blocked) begin
+			exe_uop <= df_uop;
+		end else if (mem_blocked) begin
+			/* Keep the previous value */
+		end else begin
+			exe_uop <= 0;
+		end
+	end
+
+	/* --------------------------------------------------------- */
+	/* MEM stage */
+	logic mem_wb;
+	logic[63:0] mem_result;
+	logic[31:0] mem_rflags;
+	micro_op_t mem_uop;
+
+	Mem mem(clk, exe_mem, mem_blocked, mem_wb,
+		exe_uop, exe_result, mem_result,
+		dcache_enable, dcache_wenable, dclflush, dcache_addr, dcache_rdata[31:0], dcache_wdata[31:0], dcache_done);
+
+	always_ff @ (posedge bus.clk) begin
+		if (exe_mem && !mem_blocked) begin
+			mem_uop <= exe_uop;
+			mem_rflags <= exe_rflags;
+		end else if (mem_blocked) begin
+			/* Keep the previous value */
+		end else begin
+			mem_uop <= 0;
+			mem_rflags <= 0;
+		end
+	end
+
+	/* --------------------------------------------------------- */
+	/* WB stage */
+	//logic[63:0] wb_result;
+	//logic[63:0] wb_rflags;
+	//logic[4:0] reg_num;
+	logic wb_branch;
+	logic[63:0] wb_rip;
+
+	always_ff @ (posedge bus.clk) begin
+		if (mem_wb == 1) begin
+			/* Special operations */
+			if (mem_uop.op == 2'b01) begin
+				/*  syscall */
+				rflags <= mem_rflags;
+			end
+
+			/* Deal with call/ret */
+			if (mem_uop.op== 2'b11) begin
+				/* Call %reg */
+				wb_branch <= 1;
+				wb_rip <= {32'b0, mem_uop.oprd2.value};
+			end
+		end else begin
+			wb_branch <= 0;
+			wb_rip <= 0;
+		end
+	end
+
+
 	// cse502 : Use the following as a guide to print the Register File contents.
 	final begin
+		$display("RFLAGS = %x", rflags);
 		$display("g00  = %x", 0);
 		$display("g01  = %x", 0);
 		$display("g02  = %x", 0);
