@@ -7,8 +7,8 @@ module DCache(input clk,
 	input wen,
 	input clflush,
 	input[63:0] addr,
-	output[63:0] rdata,
-	input[63:0] wdata,
+	output[31:0] rdata,
+	input[31:0] wdata,
 	output done,
 
 	output drequest,
@@ -84,7 +84,7 @@ module DCache(input clk,
 
 
 	logic[63:0] addr_buf;
-	logic[63:0] wdata_buf;
+	logic[31:0] wdata_buf;
 	//logic[64*8-1:0] dc_buf;
 	//logic[7:0] buf_idx;
 
@@ -163,7 +163,11 @@ module DCache(input clk,
 			cl_wacc_en[1] <= 0;
 			cl_wdata_en[0] <= 0;
 			cl_wdata_en[1] <= 0;
+
 			if (enable) begin
+
+				$display("[DACHE] addr: %x", addr);
+
 				assert(addr[5:0] == 0) else $fatal("[DCACHE] unaligned mem addr ");
 				if (clflush)
 					dc_state <= state_wb_s_wait;
@@ -179,7 +183,7 @@ module DCache(input clk,
 			if (acc_wait == 0 && data_wait == 0) begin
 				if (cl_hit[0]) begin
 					dc_state <= state_idle;
-					rdata <= cl_rdata[0][cl_offset*8+:64];
+					rdata <= cl_rdata[0][cl_offset*8+:32];
 					done <= 1;
 
 					/* Update our timing info */
@@ -193,7 +197,7 @@ module DCache(input clk,
 					end
 				end else if (cl_hit[1]) begin
 					dc_state <= state_idle;
-					rdata <= cl_rdata[1][cl_offset*8+:64];
+					rdata <= cl_rdata[1][cl_offset*8+:32];
 					done <= 1;
 
 					/* Update our timing info */
@@ -230,7 +234,7 @@ module DCache(input clk,
 			if (acc_wait == 0 && data_wait == 0) begin
 				if (cl_hit[0]) begin
 					dc_state <= state_idle;
-					cl_wdata[0][cl_offset*8+:64] <= wdata;
+					cl_wdata[0][cl_offset*8+:32] <= wdata;
 					cl_wdata_en[0] <= cl_wdata_en_tmp;
 					done <= 1;
 
@@ -245,7 +249,7 @@ module DCache(input clk,
 					end
 				end else if (cl_hit[1]) begin
 					dc_state <= state_idle;
-					cl_wdata[1][cl_offset*8+:64] <= wdata;
+					cl_wdata[1][cl_offset*8+:32] <= wdata;
 					cl_wdata_en[1] <= cl_wdata_en_tmp;
 					done <= 1;
 
@@ -337,7 +341,7 @@ module DCache(input clk,
 			if (ddone) begin
 				dc_state <= state_idle;
 
-				rdata <= drdata[cl_offset*8+:64];
+				rdata <= drdata[cl_offset*8+:32];
 				done <= 1;
 
 				/* Allocate cache line */
@@ -364,7 +368,7 @@ module DCache(input clk,
 				cl_wacc_en[cl_way_rp_sel] <= 1;
 
 				/* Write data into it */
-				cl_wdata[cl_way_rp_sel][cl_offset*8+:64] <= wdata_buf;
+				cl_wdata[cl_way_rp_sel][cl_offset*8+:32] <= wdata_buf;
 			end
 
 		end else if (dc_state == state_wb_m_wait) begin

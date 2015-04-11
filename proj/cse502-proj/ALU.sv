@@ -16,6 +16,11 @@ module ALU (
 	/* verilator lint_on UNUSED */
 	input[31:0] oprd2,
 	input[31:0] oprd3,
+
+	/* verilator lint_off UNUSED */
+	input[3:0] cond_code,
+	/* verilator lint_on UNUSED */
+
 	input[63:0] next_rip,
 	output[63:0] result,
 	output[31:0] rflags,
@@ -32,6 +37,8 @@ module ALU (
 
 	/* verilator lint_off WIDTH */
 	function logic[63:0] binary_op();
+
+
 		casez (op3[3:0])
 		4'h0: binary_op = oprd2 + oprd3;
 		4'h1: binary_op = oprd2 & oprd3;
@@ -48,15 +55,28 @@ module ALU (
 		4'he: binary_op = oprd2 / oprd3;
 		4'hf: binary_op = oprd2 / oprd3;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
 	function logic[31:0] binary_op_flag();
 		casez (op3[3:0])
 		4'h0: binary_op_flag = rflags;
+		4'h1: binary_op_flag = rflags;
+		4'h2: binary_op_flag = rflags;
+		4'h3: binary_op_flag = rflags;
+		4'h4: binary_op_flag = rflags;
+		4'h5: binary_op_flag = rflags;
+		4'h6: binary_op_flag = rflags;
+		4'h7: binary_op_flag = rflags;
+		4'h8: binary_op_flag = rflags;
+		4'ha: binary_op_flag = rflags;
+		4'hb: binary_op_flag = rflags;
+		4'hc: binary_op_flag = rflags;
+		4'he: binary_op_flag = rflags;
+		4'hf: binary_op_flag = rflags;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
@@ -79,7 +99,7 @@ module ALU (
 		4'he: binary_op_cc = oprd2 / oprd3;
 		4'hf: binary_op_cc = oprd2 / oprd3;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
@@ -87,7 +107,7 @@ module ALU (
 		casez (op3[3:0])
 		4'h0: binary_op_cc_flag = rflags;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
@@ -109,7 +129,7 @@ module ALU (
 		4'he: binary_op_other = oprd2 / oprd3;
 		4'hf: binary_op_other = oprd2 / oprd3;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
@@ -117,15 +137,23 @@ module ALU (
 		casez (op3[3:0])
 		4'h0: binary_op_other_flag = rflags;
 		default:
-			$display("Unsupported OP");
+			$display("[ALU] Unsupported OP");
 		endcase
 	endfunction
 
 
 	always_comb begin
+
 		if (enable) begin
+
+			$display("[ALU] op: %x op2: %x op3: %x", opcode, op2, op3);
+			$display("[ALU] oprd: %x %x %x", oprd1, oprd2, oprd3);
+
+
 			if (opcode == 3) begin
-				
+
+				$display("[ALU] memory inst");
+
 			end else if (opcode == 2) begin
 				casez (op3[5:4])
 				2'b00: begin
@@ -141,13 +169,16 @@ module ALU (
 					tmp_rflags = binary_op_other_flag();
 				end
 				2'b11: begin
-					$display("Umimplemented OP");
+					$display("[ALU] Umimplemented OP");
 				end
 				endcase
 			end else if (opcode == 1) begin
 
 			end else begin
-			
+				if (op2 == 4) begin
+					$display("[ALU] sethi value: %x", oprd2);
+					tmp_result = oprd2; 
+				end
 			end
 		end
 	end
@@ -164,20 +195,35 @@ module ALU (
 		end
 	end
 
-	function logic condition_true(logic[7:0] cond);
+	function logic condition_true(logic[3:0] cond);
 		case (cond)
-			8'h02: return rflags[`RF_C];
+			4'b1000: return 1;	/* Always */
+			4'b0000: return 0;	/* Never */
+			4'b1001: return !rflags[`RF_Z];
+			4'b0001: return rflags[`RF_Z];
+			4'b1010: return !((rflags[`RF_N] ^ rflags[`RF_V]) | rflags[`RF_Z]);
+			4'b0010: return (rflags[`RF_N] ^ rflags[`RF_V]) | rflags[`RF_Z];
+			4'b1011: return !(rflags[`RF_N] ^ rflags[`RF_V]);
+			4'b0011: return (rflags[`RF_N] ^ rflags[`RF_V]);
+			4'b1100: return !(rflags[`RF_Z] | rflags[`RF_C]);
+			4'b0100: return (rflags[`RF_Z] | rflags[`RF_C]);
+			4'b1101: return !rflags[`RF_C];
+			4'b0101: return rflags[`RF_C];
+			4'b1110: return !rflags[`RF_N];
+			4'b0110: return rflags[`RF_N];
+			4'b1111: return !rflags[`RF_V];
+			4'b0111: return rflags[`RF_V];
 			default: $display("[ALU] ERR unknown condition [%x]", cond);
 		endcase
 	endfunction
 
 
-	/* Branched, we don't deal with call/retq here */
+	/* Branched, we don't deal with call/ret here */
 	always @ (posedge clk) begin
 		if (enable == 1) begin
 			casez (opcode)
 				10'b00: begin
-					if (condition_true({4'b0,4'b0})) begin
+					if (op2 == 2 && condition_true(cond_code)) begin
 						branch <= 1;
 						branch_rip <= oprd2 + next_rip;
 					end else begin
