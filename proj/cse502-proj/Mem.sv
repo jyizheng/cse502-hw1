@@ -124,7 +124,8 @@ module Mem (input clk,
 					mem_blocked = 1;
 					mem_op = op_write;
 					addr = {32'h0, uop.oprd2.value + uop.oprd3.value}; 
-					value = alu_result[31:0];
+					value = uop.oprd1.value;
+					$display("[MEM] Memory write: %x", uop.oprd1.value);
 				end else begin
 
 

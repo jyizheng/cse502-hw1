@@ -186,21 +186,23 @@ module Core (
 			/* TODO: might need special treatment for special registers */
 			if (df_uop_tmp.oprd1.t == `OPRD_T_RS) begin
 				df_uop_tmp.oprd1.value = regs[reg_index(df_uop_tmp.oprd1.r)];
-				$display("[pre_ALU] oprd1: %d", df_uop_tmp.oprd1.r);
+				$display("[pre_ALU] oprd1-value: %x", df_uop_tmp.oprd1.value);
+				$display("[pre_ALU] oprd1-source: %x", regs[reg_index(df_uop_tmp.oprd1.r)]);
+				$display("[pre_ALU] oprd1-index: %x", df_uop_tmp.oprd1.r);
 			end
 
 			if (df_uop_tmp.oprd2.t == `OPRD_T_RS) begin
 				df_uop_tmp.oprd2.value = regs[reg_index(df_uop_tmp.oprd2.r)];
-				$display("[pre_ALU] oprd2: %d", df_uop_tmp.oprd2.r);
 				$display("[pre_ALU] oprd2-value: %x", df_uop_tmp.oprd2.value);
 				$display("[pre_ALU] oprd2-source: %x", regs[reg_index(df_uop_tmp.oprd2.r)]);
-				$display("[pre_ALU] oprd2-index: %x", reg_index(df_uop_tmp.oprd2.r));
+				$display("[pre_ALU] oprd2-index: %x", df_uop_tmp.oprd2.r);
 			end
 
 			if (df_uop_tmp.oprd3.t == `OPRD_T_RS) begin
-				df_uop_tmp.oprd2.value = regs[reg_index(df_uop_tmp.oprd3.r)];
-				$display("[pre_ALU] oprd3: %d", df_uop_tmp.oprd3.r);
+				df_uop_tmp.oprd3.value = regs[reg_index(df_uop_tmp.oprd3.r)];
 				$display("[pre_ALU] oprd3-value: %x", df_uop_tmp.oprd3.value);
+				$display("[pre_ALU] oprd3-source: %x", regs[reg_index(df_uop_tmp.oprd3.r)]);
+				$display("[pre_ALU] oprd3-index: %x", df_uop_tmp.oprd3.r);
 			end
 
 
@@ -317,9 +319,6 @@ module Core (
 
 	/* --------------------------------------------------------- */
 	/* WB stage */
-	//logic[63:0] wb_result;
-	//logic[63:0] wb_rflags;
-	//logic[4:0] reg_num;
 	logic wb_branch;
 	logic[63:0] wb_rip;
 
@@ -335,6 +334,10 @@ module Core (
 				end
 			end else if (mem_uop.op == 2'b01) begin
 				psr <= mem_rflags;
+				wb_branch <= 1;
+				wb_rip <= {32'b0, mem_uop.oprd1.value} + mem_uop.next_rip - 4;
+				regs[reg_index(15)] <= mem_uop.next_rip[31:0] - 4;
+				$display("[WB] next_rip: %x", mem_uop.next_rip[31:0]);
 			end else if (mem_uop.op == 2'b10) begin
 				$display("[WB] mem_uop.op.oprd1.r: %x", mem_uop.oprd1.r);
 				$display("[WB] mem_uop.op.oprd1.t: %x", mem_uop.oprd1.t);
@@ -360,3 +363,7 @@ module Core (
 		$display("Bye!");
 	end
 endmodule
+
+
+
+/* vim: set ts=4 sw=0 tw=0 noet : */

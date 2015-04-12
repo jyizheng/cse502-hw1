@@ -3,7 +3,8 @@
 //`define DECODER_OUTPUT 1
 `define DECODER_DEBUG 0
 `define DC_BUF_SZ	16
-`define DC_MAX_INSTR	4	// maximum number of instructions per cycle
+// maximum number of instructions per cycle
+`define DC_MAX_INSTR 4	
 
 module Decoder (
 	input clk,
@@ -18,7 +19,7 @@ module Decoder (
 );
 
 	/* verilator lint_off WIDTH */
-	enum { dc_norm, dc_stall } dc_state;
+	enum { dc_norm, dc_stall, dc_delayed } dc_state;
 
 	initial begin
 		dc_state = dc_norm;
@@ -63,12 +64,12 @@ module Decoder (
 			dc_buf_full = 1;
 	endfunction
 
-	/* if one instruction has been taken, we need to move tail ahead in advance here */
+	/* if one instruction has been taken, we need 
+		to move tail ahead in advance here */
 	function logic dc_buf_empty(logic plus_one);
 		logic[7:0] tmp_tail = (dc_buf_tail + plus_one) % `DC_BUF_SZ;
 		dc_buf_empty = (dc_buf_head == tmp_tail) ? 1 : 0;
 	endfunction
-
 
 	/* verilator lint_on UNUSED */
 	function logic fill_uop();
@@ -170,10 +171,6 @@ module Decoder (
 			annul_flag = 1'b0;
 			cond = 4'b0;
 
-			//dc_oprd[0] = 0;
-			//dc_oprd[1] = 0;
-			//dc_oprd[2] = 0;
-
 			bytes_decoded = 0;
 			next_inst = decode_bytes[{3'b000, bytes_decoded} * 32 +: 32];
 			error_code = ec_none;
@@ -201,9 +198,10 @@ module Decoder (
 				end else begin
 
 				end
-			end else if (op == 2'b01) begin  /* call */
+			end else if (op == 2'b01) begin  
+				/* call */
 				dc_oprd[0].t = `OPRD_T_DISP;
-				dc_oprd[0].value = { next_inst[29:0], 2'b00 };
+				dc_oprd[0].value = {next_inst[29:0], 2'b00};
 
 			end else if (op == 2'b10) begin
 				op3 = next_inst[24:19];
@@ -235,13 +233,14 @@ module Decoder (
 					end
 				end
 				
-			end else if (op == 2'b11) begin /* load and store */
+			end else if (op == 2'b11) begin 
+				/* load and store */
 				op3 = next_inst[24:19];
 				if (op3[3:0] == 4'h0 | op3[3:0] == 4'h1 | op3[3:0] == 4'h2 | op3[3:0] == 4'h3)
-					dc_oprd[0].t = `OPRD_T_RS;
+					dc_oprd[0].t = `OPRD_T_RD;
 
 				if (op3[3:0] == 4'h4 | op3[3:0] == 4'h5 | op3[3:0] == 4'h6 | op3[3:0] == 4'h7)
-					dc_oprd[0].t = `OPRD_T_RD;
+					dc_oprd[0].t = `OPRD_T_RS;
 
 				dc_oprd[0].r = next_inst[29:25];
 				dc_oprd[1].t = `OPRD_T_RS;
@@ -260,19 +259,25 @@ module Decoder (
 				/* Nothing else */
 			end
 
-			if (error_code != ec_none)
-				$finish;
+			if (error_code != ec_none) $finish;
 
 			bytes_decoded += 4;
 			fill_uop();
+
+
 `ifdef DECODER_DEBUG
 		$display("[DEC] next_inst %x bytes_decoded %x", next_inst, bytes_decoded); 
 		$display("[DEC] op %x op2 %x op3 %x", decoded_uops[0].op, decoded_uops[0].op2, decoded_uops[0].op3); 
-		$display("[DEC] dc_oprd %x %x %x %x %x %x %x %x %x", dc_oprd[0].t, dc_oprd[0].r, dc_oprd[0].value, dc_oprd[1].t, dc_oprd[1].r, dc_oprd[1].value, dc_oprd[2].t, dc_oprd[2].r, dc_oprd[2].value);
+		$display("[DEC] dc_oprd %x %x %x %x %x %x %x %x %x", dc_oprd[0].t, dc_oprd[0].r, dc_oprd[0].value,
+				  dc_oprd[1].t, dc_oprd[1].r, dc_oprd[1].value, dc_oprd[2].t, dc_oprd[2].r, dc_oprd[2].value);
 `endif
+
 		end else begin
 			bytes_decoded = 0;
 		end
 	end
 
 endmodule
+
+
+/* vim: set ts=4 sw=0 tw=0 noet : */

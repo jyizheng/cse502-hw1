@@ -149,11 +149,8 @@ module ALU (
 			$display("[ALU] op: %x op2: %x op3: %x", opcode, op2, op3);
 			$display("[ALU] oprd: %x %x %x", oprd1, oprd2, oprd3);
 
-
 			if (opcode == 3) begin
-
-				$display("[ALU] memory inst");
-
+				$display("[ALU] memory instruction");
 			end else if (opcode == 2) begin
 				casez (op3[5:4])
 				2'b00: begin
@@ -173,6 +170,7 @@ module ALU (
 				end
 				endcase
 			end else if (opcode == 1) begin
+				$display("[ALU] call instruction");
 
 			end else begin
 				if (op2 == 4) begin
@@ -222,7 +220,7 @@ module ALU (
 	always @ (posedge clk) begin
 		if (enable == 1) begin
 			casez (opcode)
-				10'b00: begin
+				2'b00: begin
 					if (op2 == 2 && condition_true(cond_code)) begin
 						branch <= 1;
 						branch_rip <= oprd2 + next_rip;
@@ -231,6 +229,7 @@ module ALU (
 						branch_rip <= next_rip;
 					end
 				end
+
 				default: begin
 					branch <= 0;
 				end
@@ -242,3 +241,6 @@ module ALU (
 	end
 
 endmodule
+
+
+/* vim: set ts=4 sw=0 tw=0 noet : */
