@@ -33,7 +33,10 @@ module Decoder (
 
 	logic annul_flag;
 	logic i_flag;
-	
+
+	logic restore_after_ret;	
+
+
 	oprd_t dc_oprd[3];
 
 	enum { ec_none, ec_invalid_op, ec_rex } error_code;
@@ -84,7 +87,10 @@ module Decoder (
 			decoded_uops[0].oprd1 = dc_oprd[0];
 			decoded_uops[0].oprd2 = dc_oprd[1];
 			decoded_uops[0].oprd3 = dc_oprd[2];
-			decoded_uops[0].next_rip = rip + bytes_decoded;
+			if (restore_after_ret) 
+				decoded_uops[0].next_rip = 0;
+			else 
+				decoded_uops[0].next_rip = rip + bytes_decoded;
 			num_decoded_uops = 1;
 		end
 
@@ -92,31 +98,39 @@ module Decoder (
 	endfunction
 
 	function logic set_dc_state_on_br();
-		if (op == 2'b01) begin
+		if (dc_state == dc_delayed) begin
 			dc_state <= dc_stall;
+			$display("[DEC] from delayed to stall");
+		end else if (op == 2'b01) begin
+			dc_state <= dc_delayed;
 		end else if (op == 2'b00) begin	
 			casez (op2)
 			/* Bicc */
-			3'b010: dc_state <= dc_stall;
+			3'b010: dc_state <= dc_delayed;
 			/* FBfcc */
-			3'b110: dc_state <= dc_stall;
+			3'b110: dc_state <= dc_delayed;
 			/* CBccc */
-			3'b111: dc_state <= dc_stall;
+			3'b111: dc_state <= dc_delayed;
 			default: /* Do nothing */;
 			endcase
 		end else if (op == 2'b10) begin	
 			casez (op3)
 			/* JMPL */
-			6'h38: dc_state <= dc_stall;
+			6'h38: dc_state <= dc_delayed;
 			/* RETT */
 			6'h39: dc_state <= dc_stall;
 			/* Ticc */
 			6'h3a: dc_state <= dc_stall;
+			/* Save */
+			6'h3c: dc_state <= dc_stall;
+			/* Restore */
+			6'h3d: dc_state <= dc_stall;
 			default: /* Do nothing */;
 			endcase
 		end else begin 
 
 		end
+
 
 		return 0;
 	endfunction
@@ -126,6 +140,7 @@ module Decoder (
 		if (dc_resume) begin
 			assert(dc_state == dc_stall) else $fatal("[DEC] resume at non-stall state?");
 			dc_state <= dc_norm;
+			$display("[DEC] resume to norm");
 		end else begin
 			/* Set decoder state for branch */
 			if (can_decode) begin
@@ -136,7 +151,7 @@ module Decoder (
 
 	always @(posedge clk) begin
 		/* Put decoded instruction into buffer */
-		if (can_decode && !dc_buf_full() && dc_state == dc_norm) begin
+		if (can_decode && !dc_buf_full() && dc_state != dc_stall) begin
 			if (num_decoded_uops >= 1) begin
 				dc_buf[dc_buf_head[3:0]] <= decoded_uops[0];
 			end
@@ -164,7 +179,9 @@ module Decoder (
 	always_comb begin
 		logic[31:0] next_inst;
 		num_decoded_uops = 0;
-		if (can_decode && !dc_buf_full() && dc_state == dc_norm) begin : decoder
+		restore_after_ret = 0;
+
+		if (can_decode && !dc_buf_full() && dc_state != dc_stall) begin : decoder
 			op2 = 3'b000;
 			op3 = 6'b000000;
 			i_flag = 1'b0;
@@ -176,7 +193,6 @@ module Decoder (
 			error_code = ec_none;
 
 			op = next_inst[31:30];
-			$display("[DEC] op %x", op);
 			if (op == 2'b00) begin
 				op2 = next_inst[24:22];
 				/* sethi */
@@ -184,16 +200,23 @@ module Decoder (
 					dc_oprd[0].t = `OPRD_T_RD;
 					dc_oprd[0].r = next_inst[29:25];
 					dc_oprd[1].t = `OPRD_T_IMM;
-					dc_oprd[1].value = { next_inst[21:0], 10'b0000_0000_00 };
+					dc_oprd[1].value = { next_inst[21:0], 10'b0000000000 };
+					$display("[DEC] sethi value: %x", dc_oprd[1].value);
 				/* branch */
 				end else if (op2 == 3'b010) begin
 					annul_flag = next_inst[29];
 					cond = next_inst[28:25];
 					if (annul_flag == 0) begin
+						$display("[DEC] Annul bit is not set");
+						$display("[DEC] Branch Disp: %x", next_inst[21:0]);
 						dc_oprd[0].t = `OPRD_T_DISP;
 						dc_oprd[0].value = { {8{next_inst[21]}}, next_inst[21:0], 2'b00 };
 					end else begin
 						/* XXX: When Annul bit is 1 */
+						$display("[DEC] Annul bit is set");
+						$display("[DEC] Branch Disp: %x", next_inst[21:0]);
+						dc_oprd[0].t = `OPRD_T_DISP;
+						dc_oprd[0].value = { {8{next_inst[21]}}, next_inst[21:0], 2'b00 };
 					end
 				end else begin
 
@@ -205,15 +228,20 @@ module Decoder (
 
 			end else if (op == 2'b10) begin
 				op3 = next_inst[24:19];
-				$display("[DEC] op3 %x", op3);
+				cond = next_inst[28:25];
 
 				if (op3 == 6'h34) begin
 					opf = next_inst[13:5];
 				end else if (op3 == 6'h35) begin
 					opf = next_inst[13:5];
 				end else if (op3 == 6'h3A) begin
-
-				end else begin
+					/* Ticc */
+					if (next_inst == 32'h91d02010) /* ta 0x10 */ begin
+						dc_oprd[0].t = `OPRD_T_RD;
+						dc_oprd[0].r = `REG_O0;						
+					end
+				end else if (op3 == 6'h38) begin
+					/* JMPL */
 					dc_oprd[0].t = `OPRD_T_RD;
 					dc_oprd[0].r = next_inst[29:25];
 					dc_oprd[1].t = `OPRD_T_RS;
@@ -224,10 +252,49 @@ module Decoder (
 						dc_oprd[2].t = `OPRD_T_IMM;
 						dc_oprd[2].value = { {19{next_inst[12]}}, next_inst[12:0] };
 					end else begin
-						dc_oprd[0].t = `OPRD_T_RD;
-						dc_oprd[0].r = next_inst[29:25];
-						dc_oprd[1].t = `OPRD_T_RS;
-						dc_oprd[1].r = next_inst[18:14];
+						dc_oprd[2].t = `OPRD_T_RS;
+						dc_oprd[2].r = next_inst[4:0];
+					end
+
+				end else if (op3 == 6'h3C | op3 == 6'h3D) begin
+					/* Save & Restore */
+					if (op3 == 6'h3C) begin
+						$display("[DEC] Save instruction");
+					end
+
+					if (op3 == 6'h3D) begin
+						$display("[DEC] Restore instruction");
+					end
+
+					dc_oprd[0].t = `OPRD_T_RD;
+					dc_oprd[0].r = next_inst[29:25];
+					dc_oprd[1].t = `OPRD_T_RS;
+					dc_oprd[1].r = next_inst[18:14];
+					i_flag = next_inst[13];
+
+					if (i_flag) begin
+						dc_oprd[2].t = `OPRD_T_IMM;
+						dc_oprd[2].value = { {19{next_inst[12]}}, next_inst[12:0] };
+					end else begin
+						dc_oprd[2].t = `OPRD_T_RS;
+						dc_oprd[2].r = next_inst[4:0];
+					end
+
+					if (dc_state == dc_delayed && op3 == 6'h3D) begin
+						restore_after_ret = 1;
+						$display("[DEC] restore_after_ret %x", restore_after_ret);
+					end
+				end else begin /* Normal operations like add, sub */
+					dc_oprd[0].t = `OPRD_T_RD;
+					dc_oprd[0].r = next_inst[29:25];
+					dc_oprd[1].t = `OPRD_T_RS;
+					dc_oprd[1].r = next_inst[18:14];
+					i_flag = next_inst[13];
+
+					if (i_flag) begin
+						dc_oprd[2].t = `OPRD_T_IMM;
+						dc_oprd[2].value = { {19{next_inst[12]}}, next_inst[12:0] };
+					end else begin
 						dc_oprd[2].t = `OPRD_T_RS;
 						dc_oprd[2].r = next_inst[4:0];
 					end
@@ -270,6 +337,10 @@ module Decoder (
 		$display("[DEC] op %x op2 %x op3 %x", decoded_uops[0].op, decoded_uops[0].op2, decoded_uops[0].op3); 
 		$display("[DEC] dc_oprd %x %x %x %x %x %x %x %x %x", dc_oprd[0].t, dc_oprd[0].r, dc_oprd[0].value,
 				  dc_oprd[1].t, dc_oprd[1].r, dc_oprd[1].value, dc_oprd[2].t, dc_oprd[2].r, dc_oprd[2].value);
+
+		if (op == 0 && op2 == 2)
+			$display("[DEC] cond: %x, disp: %x", cond, dc_oprd[0].value);
+
 `endif
 
 		end else begin

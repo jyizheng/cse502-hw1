@@ -27,6 +27,41 @@
 `define RF_CWP_MSB	4
 `define RF_CWP_LSB	0
 
+`define REG_G0	0
+`define REG_G1	1
+`define REG_G2	2
+`define REG_G3	3
+`define REG_G4	4
+`define REG_G5	5
+`define REG_G6	6
+`define REG_G7	7
+
+`define REG_O0	8
+`define REG_O1	9
+`define REG_O2	10
+`define REG_O3	11
+`define REG_O4	12
+`define REG_O5	13
+`define REG_O6	14
+`define REG_O7	15
+
+`define REG_L0	16
+`define REG_L1	17
+`define REG_L2	18
+`define REG_L3	19
+`define REG_L4	20
+`define REG_L5	21
+`define REG_L6	22
+`define REG_L7	23
+
+`define REG_I0	24
+`define REG_I1	25
+`define REG_I2	26
+`define REG_I3	27
+`define REG_I4	28
+`define REG_I5	29
+`define REG_I6	30
+`define REG_I7	31
 
 `endif
 

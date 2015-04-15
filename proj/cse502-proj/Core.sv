@@ -23,6 +23,24 @@ module Core (
 
 	logic[31:0] regs[`REG_WIN_NUM-1:0];
 
+	logic[5:0] test_a;
+	logic[5:0] test_b;
+	logic[6:0] test_c;
+
+
+	assign test_a  = 6'd33;
+	assign test_b  = 6'd-1;
+	assign test_c  = test_a * test_b;
+
+	assign regs[reg_index(`REG_G0)] = 32'b0;
+
+	initial begin
+		$display("a: %b", test_a);
+		$display("b: %b", test_b);
+		$display("c: %b", test_c);
+	end
+
+
 	/* ++++++++++++++++ Data initialization ++++++++++++++++++++ */
 	always_ff @ (posedge bus.clk) begin
 		if (bus.reset) begin
@@ -107,23 +125,35 @@ module Core (
 	logic dc_resume = 0;
 	micro_op_t dc_uop;
 	Decoder decoder(clk, if_dc, dc_resume, decode_rip, decode_bytes, dc_taken,
-		bytes_decoded, dc_uop, dc_df);
+					bytes_decoded, dc_uop, dc_df);
+
 
 	always_comb begin
 		if (bus.reset) begin
 			if_set_rip = 1;
 			if_new_rip = entry;
+		end else if (wb_branch) begin
+			if_set_rip = 1;
+			if_new_rip = {32'b0, wb_rip[31:0]};
+		end else if (exe_branch) begin
+			if_set_rip = 1;
+			if_new_rip = {32'b0, exe_rip[31:0]};
+			$display("[SET_RIP] exe_rip: %x", exe_rip[31:0]);
 		end else begin
 			if_set_rip = 0;
 			if_new_rip = 0;
 		end
 	end
 
+
+
 	always_ff @ (posedge bus.clk) begin
 		if (wb_branch) begin
 			dc_resume <= 1;
+			$display("[DEC] set dc_resume by wb_branch wb_rip: %x", wb_rip);
 		end else if (exe_branch) begin
 			dc_resume <= 1;
+			$display("[DEC] set dc_resume by exe_branch exe_rip: %x", exe_rip);
 		end else 
 			dc_resume <= 0;
 	end
@@ -173,6 +203,20 @@ module Core (
 	endfunction
 
 
+	function logic [31:0] reg_index_win(logic[4:0] index, logic[4:0] win);
+		logic[31:0] cwp_tmp;
+		logic[31:0] out_reg_start_tmp;
+
+		cwp_tmp = {27'b0, win};
+		out_reg_start_tmp = cwp_tmp*16+8;
+
+		if (index < 8)
+			return {27'b0 , index};
+		else
+			return out_reg_start_tmp + {27'b0, index} - 8;	
+	endfunction
+
+
 	always_comb begin
 		df_taken = 0;
 		if (dc_df == 1 && !df_reg_conflict(dc_uop) && !mem_blocked) begin
@@ -184,6 +228,16 @@ module Core (
 
 			/* Retrieve register values
 			/* TODO: might need special treatment for special registers */
+
+			if (df_uop_tmp.oprd1.t == `OPRD_T_RD) begin
+				$display("[pre_ALU] oprd1-des-index: %x", df_uop_tmp.oprd1.r);
+			end
+
+			if (df_uop_tmp.oprd1.t == `OPRD_T_DISP) begin
+				$display("[pre_ALU] oprd1-disp: %x", df_uop_tmp.oprd1.r);
+			end
+
+
 			if (df_uop_tmp.oprd1.t == `OPRD_T_RS) begin
 				df_uop_tmp.oprd1.value = regs[reg_index(df_uop_tmp.oprd1.r)];
 				$display("[pre_ALU] oprd1-value: %x", df_uop_tmp.oprd1.value);
@@ -209,14 +263,14 @@ module Core (
 			if (1) begin
 			$display("PSR = %x", psr);
 			$display("reg_occupies = %x", reg_occupies);
-			$display("g00 = %x", regs[reg_index(0)]);
-			$display("g01 = %x", regs[reg_index(1)]);
-			$display("g02 = %x", regs[reg_index(2)]);
-			$display("g03 = %x", regs[reg_index(3)]);
-			$display("g04 = %x", regs[reg_index(4)]);
-			$display("g05 = %x", regs[reg_index(5)]);
-			$display("g06 = %x", regs[reg_index(6)]);
-			$display("g07 = %x", regs[reg_index(7)]);
+			$display("g0 = %x", regs[reg_index(0)]);
+			$display("g1 = %x", regs[reg_index(1)]);
+			$display("g2 = %x", regs[reg_index(2)]);
+			$display("g3 = %x", regs[reg_index(3)]);
+			$display("g4 = %x", regs[reg_index(4)]);
+			$display("g5 = %x", regs[reg_index(5)]);
+			$display("g6 = %x", regs[reg_index(6)]);
+			$display("g7 = %x", regs[reg_index(7)]);
 
 			$display("out0 = %x", regs[reg_index(8)]);
 			$display("out1 = %x", regs[reg_index(9)]);
@@ -280,7 +334,7 @@ module Core (
 
 	ALU alu(clk, df_exe,
 		df_uop.op, df_uop.op2, df_uop.op3, df_uop.oprd1.value, df_uop.oprd2.value, df_uop.oprd3.value, 
-		df_uop.cond, df_uop.next_rip, exe_result, exe_rflags, exe_mem, mem_blocked, exe_branch, exe_rip);
+		df_uop.cond, df_uop.annul_flag, df_uop.next_rip, exe_result, exe_rflags, exe_mem, mem_blocked, exe_branch, exe_rip);
 
 	always_ff @ (posedge bus.clk) begin
 		if (df_exe && !mem_blocked) begin
@@ -331,25 +385,89 @@ module Core (
 				if (mem_uop.op2 == 4) begin
 					regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
 					reg_occupies[mem_uop.oprd1.r] <= 0;
+				end else if (mem_uop.op2 == 2) begin
+					
+
+
 				end
 			end else if (mem_uop.op == 2'b01) begin
 				psr <= mem_rflags;
 				wb_branch <= 1;
 				wb_rip <= {32'b0, mem_uop.oprd1.value} + mem_uop.next_rip - 4;
 				regs[reg_index(15)] <= mem_uop.next_rip[31:0] - 4;
-				$display("[WB] next_rip: %x", mem_uop.next_rip[31:0]);
+				$display("[WB] next_rip: %x", {32'b0, mem_uop.oprd1.value} + mem_uop.next_rip - 4);
 			end else if (mem_uop.op == 2'b10) begin
 				$display("[WB] mem_uop.op.oprd1.r: %x", mem_uop.oprd1.r);
 				$display("[WB] mem_uop.op.oprd1.t: %x", mem_uop.oprd1.t);
 				$display("[WB] mem_result: %x", mem_result[31:0]);
 				$display("[WB] mem_rflags: %x", mem_rflags);
-				regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
+
+				if (mem_uop.op3 == 6'h3C) begin
+					/* SAVE */			
+					regs[reg_index_win(mem_uop.oprd1.r, mem_rflags[4:0])] <= mem_result[31:0];
+					wb_branch <= 1;
+					wb_rip <= mem_uop.next_rip;
+				end else if (mem_uop.op3 == 6'h3D) begin
+					/* Restore */
+					regs[reg_index_win(mem_uop.oprd1.r, mem_rflags[4:0])] <= mem_result[31:0];
+					if (mem_uop.next_rip != 0) begin
+						wb_branch <= 1;
+						wb_rip <= mem_uop.next_rip;
+					end
+				end else if (mem_uop.op3 == 6'h3A) begin
+					if (mem_uop.cond == 4'h8) begin /* ta 0x10 */
+						if (regs[reg_index(`REG_G1)] == 1) begin
+							/* Let it stall here */
+
+						end else begin
+							regs[reg_index(`REG_O0)] <= syscall_cse502(regs[reg_index(`REG_G1)],
+										regs[reg_index(`REG_O0)], regs[reg_index(`REG_O1)],
+										regs[reg_index(`REG_O2)], regs[reg_index(`REG_O3)],
+										regs[reg_index(`REG_O4)], regs[reg_index(`REG_O5)]);
+							wb_branch <= 1;
+							wb_rip <= mem_uop.next_rip;
+							$display("sparc: O0:%x", regs[reg_index(`REG_O0)]);
+						end
+						$display("[WB] system call num: %x", regs[reg_index(`REG_G1)]);
+					end
+
+				end else if (mem_uop.op3 == 6'h38) begin
+					/* JMPL */
+					regs[reg_index(mem_uop.oprd1.r)] <= mem_uop.next_rip[31:0] - 4;
+					wb_branch <= 1;
+					wb_rip <= {32'b0, mem_result};
+				end else begin
+					regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
+				end
+
 				reg_occupies[mem_uop.oprd1.r] <= 0;
 				psr <= mem_rflags;
+
 			end else begin
-				regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
+				if (mem_uop.op3[5:0] == 6'h00) begin
+					/* LD */
+					regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
+				end else if (mem_uop.op3[5:0] == 6'h01) begin 
+					/* LDUB */
+					regs[reg_index(mem_uop.oprd1.r)] <= {24'b0, mem_result[7:0]};
+				end else if (mem_uop.op3[5:0] == 6'h02) begin
+					/* LDUH */
+					regs[reg_index(mem_uop.oprd1.r)] <= {16'b0, mem_result[15:0]};
+				end else if (mem_uop.op3[5:0] == 6'h03) begin
+					/* LDD */
+					regs[reg_index(mem_uop.oprd1.r)] <= mem_result[31:0];
+				end else if (mem_uop.op3[5:0] == 6'h09) begin
+					/* LDSB */
+					regs[reg_index(mem_uop.oprd1.r)] <= { {24{mem_result[7]}}, mem_result[7:0]};
+					$display("[WB] LDSB: %x", mem_result[7:0]);	
+				end else begin
+
+
+				end
+
 				reg_occupies[mem_uop.oprd1.r] <= 0;
 				psr <= mem_rflags;
+
 			end
 
 		end else begin

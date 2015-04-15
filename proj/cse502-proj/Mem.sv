@@ -104,14 +104,13 @@ module Mem (input clk,
 			$display("[MEM]	oprd1.t %x, oprd1.r %x, oprd1.value %x" , uop.oprd1.t, uop.oprd1.r, uop.oprd1.value);
 			$display("[MEM]	oprd2.t %x, oprd2.r %x, oprd2.value %x" , uop.oprd2.t, uop.oprd2.r, uop.oprd2.value);
 			$display("[MEM]	oprd3.t %x, oprd3.r %x, oprd3.value %x" , uop.oprd3.t, uop.oprd3.r, uop.oprd3.value);
-
 			
 			if (uop.op == 2'b11) begin
-				if (uop.op3 == 6'h00) begin
+				if (uop.op3 == 6'h00 | uop.op3 == 6'h09) begin
 					mem_blocked = 1;
 					mem_op = op_read;
 					addr = {32'h0, uop.oprd2.value + uop.oprd3.value}; 
-					$display("[MEM] Memory read");
+					$display("[MEM] Memory read, addr %x", addr);
 				end else if (uop.op3 == 6'h01) begin
 
 
@@ -125,13 +124,16 @@ module Mem (input clk,
 					mem_op = op_write;
 					addr = {32'h0, uop.oprd2.value + uop.oprd3.value}; 
 					value = uop.oprd1.value;
-					$display("[MEM] Memory write: %x", uop.oprd1.value);
+					$display("[MEM] Memory write value: %x", uop.oprd1.value);
+					$display("[MEM] Memory write addr: %x", addr);
+
 				end else begin
 
 
 				end
 
-
+			end else if (uop.op == 2'b01) begin 
+					/* call: no ALU result will be used */
 			end else begin
 				tmp_mem_result = alu_result;
 				mem_op = op_none;
@@ -147,3 +149,4 @@ module Mem (input clk,
 
 endmodule
 
+/* vim: set ts=4 sw=0 tw=0 noet : */
